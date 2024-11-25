@@ -21,6 +21,7 @@ import (
 	"os"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -209,10 +210,29 @@ func main() {
 	}
 }
 
+// prepare manipulates memory cache allowance and setups metric system.
+// This function should be called before launching devp2p stack.
+func prepare(ctx *cli.Context) {
+
+	// If we're a full node on mainnet without --cache specified, bump default cache allowance
+	if !ctx.IsSet(utils.CacheFlag.Name) && !ctx.IsSet(utils.NetworkIdFlag.Name) {
+		log.Info("Bumping default cache on mainnet", "provided", ctx.Int(utils.CacheFlag.Name), "updated", 4096)
+		ctx.Set(utils.CacheFlag.Name, strconv.Itoa(4096))
+	}
+	// Note: This features below will be improved and updated in future releases.
+	// Start metrics export if enabled
+	// utils.SetupMetrics(ctx)
+
+	// Start system runtime metrics collection
+	// go metrics.CollectProcessMetrics(3 * time.Second)
+
+}
+
 // tomo is the main entry point into the system if no special subcommand is ran.
 // It creates a default node based on the command line arguments and runs it in
 // blocking mode, waiting for it to be shut down.
 func tomo(ctx *cli.Context) error {
+	prepare(ctx)
 	node, cfg := makeFullNode(ctx)
 	startNode(ctx, node, cfg)
 	node.Wait()
