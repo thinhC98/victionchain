@@ -30,7 +30,7 @@ require (
 	github.com/olekukonko/tablewriter v0.0.2-0.20190409134802-7e037d187b0c
 	github.com/pborman/uuid v1.2.0
 	github.com/peterh/liner v1.1.1-0.20190123174540-a2c9a5303de7
-	github.com/pkg/errors v0.8.1
+	github.com/pkg/errors v0.9.1
 	github.com/prometheus/prometheus v1.7.2-0.20170814170113-3101606756c5
 	github.com/rjeczalik/notify v0.9.2
 	github.com/rs/cors v1.6.0
@@ -52,6 +52,7 @@ require (
 require (
 	github.com/cespare/xxhash/v2 v2.1.1 // indirect
 	github.com/dlclark/regexp2 v1.2.0 // indirect
+	github.com/elastic/gosigar v0.14.3 // indirect
 	github.com/go-sourcemap/sourcemap v2.1.2+incompatible // indirect
 	github.com/google/go-cmp v0.3.1 // indirect
 	github.com/google/uuid v1.0.0 // indirect
