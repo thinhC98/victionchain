@@ -185,6 +185,7 @@ func (*HandlerT) WriteMutexProfile(file string) error {
 // Note that the profiling rate cannot be set through the API,
 // it must be set on the command line.
 func (*HandlerT) WriteMemProfile(file string) error {
+	runtime.GC()
 	return writeProfile("heap", file)
 }
 
