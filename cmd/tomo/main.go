@@ -215,7 +215,7 @@ func main() {
 func prepare(ctx *cli.Context) {
 
 	// If we're a full node on mainnet without --cache specified, bump default cache allowance
-	if !ctx.IsSet(utils.CacheFlag.Name) && !ctx.IsSet(utils.NetworkIdFlag.Name) {
+	if !ctx.IsSet(utils.CacheFlag.Name) {
 		log.Info("Bumping default cache on mainnet", "provided", ctx.Int(utils.CacheFlag.Name), "updated", 4096)
 		ctx.Set(utils.CacheFlag.Name, strconv.Itoa(4096))
 	}
