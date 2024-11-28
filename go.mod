@@ -35,7 +35,7 @@ require (
 	github.com/rjeczalik/notify v0.9.2
 	github.com/rs/cors v1.6.0
 	github.com/steakknife/bloomfilter v0.0.0-20180922174646-6819c0d2a570
-	github.com/stretchr/testify v1.4.0
+	github.com/stretchr/testify v1.9.0
 	github.com/syndtr/goleveldb v1.0.1-0.20190923125748-758128399b1d
 	golang.org/x/crypto v0.0.0-20191105034135-c7e5f84aec59
 	golang.org/x/net v0.0.0-20190912160710-24e19bdeb0f2
@@ -56,6 +56,9 @@ require (
 	github.com/go-sourcemap/sourcemap v2.1.2+incompatible // indirect
 	github.com/google/go-cmp v0.3.1 // indirect
 	github.com/google/uuid v1.0.0 // indirect
+	github.com/grafana/pyroscope-go v1.2.0 // indirect
+	github.com/grafana/pyroscope-go/godeltaprof v0.1.8 // indirect
+	github.com/klauspost/compress v1.17.8 // indirect
 	github.com/kr/pretty v0.1.0 // indirect
 	github.com/kr/text v0.1.0 // indirect
 	github.com/maruel/panicparse v0.0.0-20160720141634-ad661195ed0e // indirect
