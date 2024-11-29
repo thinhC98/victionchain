@@ -64,5 +64,6 @@ func TestCalcSaigonReward(t *testing.T) {
 		if i >= 122 {
 			assert.True(t, reward.Cmp(zeroReward) == 0, "post-Saigon Upgrade reward mismatch (%s) at epoch %s", reward, i)
 		}
+
 	}
 }
