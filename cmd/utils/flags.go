@@ -563,6 +563,33 @@ var (
 		Name:  "slave",
 		Usage: "Enable slave mode",
 	}
+	ForceOverrideChainConfigFlag = cli.BoolFlag{
+		Name:  "overrideChainConfig",
+		Usage: "force override chainconfig",
+	}
+	PyroscopeEnableFlag = cli.BoolFlag{
+		Name:  "pyroscope.enabled",
+		Usage: "Enable pyroscope - profiling tool",
+	}
+	PyroscopeMutexProfileFraction = cli.IntFlag{
+		Name:  "pyroscope.mutexprofilefraction",
+		Usage: "Get the fraction of mutex contention events",
+		Value: 5,
+	}
+	PyroscopeBlockProfileRate = cli.IntFlag{
+		Name:  "pyroscope.blockprofilerate",
+		Usage: "Get the fraction of goroutine blocking events",
+		Value: 5,
+	}
+	PyroscopeApplicationName = cli.StringFlag{
+		Name:  "pyroscope.app.name",
+		Usage: "Set application that is displayed in pyroscope UI",
+	}
+	PyroscopeServerAddress = cli.StringFlag{
+		Name:  "pyroscope.server",
+		Usage: "Pyroscope server address",
+		Value: "http://localhost:4040",
+	}
 )
 
 // MakeDataDir retrieves the currently requested data directory, terminating

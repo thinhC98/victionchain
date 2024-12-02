@@ -19,6 +19,7 @@ require (
 	github.com/go-stack/stack v1.8.0
 	github.com/golang/protobuf v1.3.2
 	github.com/golang/snappy v0.0.1
+	github.com/grafana/pyroscope-go v1.2.0
 	github.com/hashicorp/golang-lru v0.5.3
 	github.com/huin/goupnp v1.0.0
 	github.com/influxdata/influxdb v1.7.9
@@ -34,8 +35,9 @@ require (
 	github.com/prometheus/prometheus v1.7.2-0.20170814170113-3101606756c5
 	github.com/rjeczalik/notify v0.9.2
 	github.com/rs/cors v1.6.0
+	github.com/shirou/gopsutil v3.21.11+incompatible
 	github.com/steakknife/bloomfilter v0.0.0-20180922174646-6819c0d2a570
-	github.com/stretchr/testify v1.4.0
+	github.com/stretchr/testify v1.9.0
 	github.com/syndtr/goleveldb v1.0.1-0.20190923125748-758128399b1d
 	golang.org/x/crypto v0.0.0-20191105034135-c7e5f84aec59
 	golang.org/x/net v0.0.0-20190912160710-24e19bdeb0f2
@@ -56,6 +58,8 @@ require (
 	github.com/go-sourcemap/sourcemap v2.1.2+incompatible // indirect
 	github.com/google/go-cmp v0.3.1 // indirect
 	github.com/google/uuid v1.0.0 // indirect
+	github.com/grafana/pyroscope-go/godeltaprof v0.1.8 // indirect
+	github.com/klauspost/compress v1.17.8 // indirect
 	github.com/kr/pretty v0.1.0 // indirect
 	github.com/kr/text v0.1.0 // indirect
 	github.com/maruel/panicparse v0.0.0-20160720141634-ad661195ed0e // indirect
@@ -66,10 +70,9 @@ require (
 	github.com/naoina/go-stringutil v0.1.0 // indirect
 	github.com/nsf/termbox-go v0.0.0-20170211012700-3540b76b9c77 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/shirou/gopsutil v3.21.11+incompatible // indirect
 	github.com/steakknife/hamming v0.0.0-20180906055917-c99c65617cd3 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
 	golang.org/x/text v0.3.2 // indirect
-	gopkg.in/yaml.v2 v2.2.2 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 	gotest.tools v2.2.0+incompatible // indirect
 )

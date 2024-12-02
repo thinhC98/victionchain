@@ -214,6 +214,16 @@ var AppHelpFlagGroups = []flagGroup{
 	//	Flags: whisperFlags,
 	//},
 	{
+		Name: "PROFILING",
+		Flags: []cli.Flag{
+			utils.PyroscopeEnableFlag,
+			utils.PyroscopeApplicationName,
+			utils.PyroscopeServerAddress,
+			utils.PyroscopeBlockProfileRate,
+			utils.PyroscopeMutexProfileFraction,
+		},
+	},
+	{
 		Name: "DEPRECATED",
 		Flags: []cli.Flag{
 			utils.FastSyncFlag,

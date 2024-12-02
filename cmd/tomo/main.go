@@ -17,6 +17,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -25,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/grafana/pyroscope-go"
 	"github.com/tomochain/tomochain/accounts"
 	"github.com/tomochain/tomochain/accounts/keystore"
 	"github.com/tomochain/tomochain/cmd/utils"
@@ -42,6 +44,8 @@ import (
 
 const (
 	clientIdentifier = "tomo" // Client identifier to advertise over the network
+	defaultMutexProfileFraction = 5
+	defaultBlockProfileRate     = 5
 )
 
 var (
@@ -150,6 +154,14 @@ var (
 		utils.WhisperMaxMessageSizeFlag,
 		utils.WhisperMinPOWFlag,
 	}
+
+	pyroscopeFlags = []cli.Flag{
+		utils.PyroscopeEnableFlag,
+		utils.PyroscopeApplicationName,
+		utils.PyroscopeServerAddress,
+		utils.PyroscopeBlockProfileRate,
+		utils.PyroscopeMutexProfileFraction,
+	}
 )
 
 func init() {
@@ -183,6 +195,7 @@ func init() {
 	app.Flags = append(app.Flags, consoleFlags...)
 	app.Flags = append(app.Flags, debug.Flags...)
 	app.Flags = append(app.Flags, whisperFlags...)
+	app.Flags = append(app.Flags, pyroscopeFlags...)
 
 	app.Before = func(ctx *cli.Context) error {
 		runtime.GOMAXPROCS(runtime.NumCPU())
@@ -214,6 +227,13 @@ func main() {
 // It creates a default node based on the command line arguments and runs it in
 // blocking mode, waiting for it to be shut down.
 func tomo(ctx *cli.Context) error {
+	if ctx.GlobalBool(utils.PyroscopeEnableFlag.Name) {
+		profiler, err := setupPyroScopeProfiler(ctx)
+		if err != nil {
+			return err
+		}
+		defer profiler.Stop()
+	}
 	prepare(ctx)
 	node, cfg := makeFullNode(ctx)
 	startNode(ctx, node, cfg)
@@ -237,6 +257,48 @@ func prepare(ctx *cli.Context) {
 	// Start system runtime metrics collection
 	// go metrics.CollectProcessMetrics(3 * time.Second)
 
+}
+
+func setupPyroScopeProfiler(ctx *cli.Context) (*pyroscope.Profiler, error) {
+	var (
+		mutexProfileFraction = defaultMutexProfileFraction
+		blockProfile         = defaultBlockProfileRate
+		serverAddress        = "http://localhost:4040"
+		applicationName      string
+	)
+	if ctx.GlobalIsSet(utils.PyroscopeApplicationName.Name) {
+		applicationName = ctx.GlobalString(utils.PyroscopeApplicationName.Name)
+	}
+	if applicationName == "" {
+		return nil, errors.New("applicationName is empty")
+	}
+	if ctx.GlobalIsSet(utils.PyroscopeMutexProfileFraction.Name) {
+		mutexProfileFraction = ctx.GlobalInt(utils.PyroscopeMutexProfileFraction.Name)
+	}
+	if ctx.GlobalIsSet(utils.PyroscopeBlockProfileRate.Name) {
+		blockProfile = ctx.GlobalInt(utils.PyroscopeBlockProfileRate.Name)
+	}
+	if ctx.GlobalIsSet(utils.PyroscopeServerAddress.Name) {
+		serverAddress = ctx.GlobalString(utils.PyroscopeServerAddress.Name)
+	}
+	runtime.SetMutexProfileFraction(mutexProfileFraction)
+	runtime.SetBlockProfileRate(blockProfile)
+	return pyroscope.Start(pyroscope.Config{
+		ApplicationName: applicationName,
+		ServerAddress:   serverAddress,
+		ProfileTypes: []pyroscope.ProfileType{
+			pyroscope.ProfileCPU,
+			pyroscope.ProfileAllocObjects,
+			pyroscope.ProfileAllocSpace,
+			pyroscope.ProfileInuseObjects,
+			pyroscope.ProfileInuseSpace,
+			pyroscope.ProfileGoroutines,
+			pyroscope.ProfileMutexCount,
+			pyroscope.ProfileMutexDuration,
+			pyroscope.ProfileBlockCount,
+			pyroscope.ProfileBlockDuration,
+		},
+	})
 }
 
 // startNode boots up the system node and all registered protocols, after which
