@@ -17,7 +17,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -264,13 +263,10 @@ func setupPyroScopeProfiler(ctx *cli.Context) (*pyroscope.Profiler, error) {
 		mutexProfileFraction = defaultMutexProfileFraction
 		blockProfile         = defaultBlockProfileRate
 		serverAddress        = "http://localhost:4040"
-		applicationName      string
+		applicationName      = "victionchain"
 	)
 	if ctx.GlobalIsSet(utils.PyroscopeApplicationName.Name) {
 		applicationName = ctx.GlobalString(utils.PyroscopeApplicationName.Name)
-	}
-	if applicationName == "" {
-		return nil, errors.New("applicationName is empty")
 	}
 	if ctx.GlobalIsSet(utils.PyroscopeMutexProfileFraction.Name) {
 		mutexProfileFraction = ctx.GlobalInt(utils.PyroscopeMutexProfileFraction.Name)
