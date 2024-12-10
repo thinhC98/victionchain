@@ -406,6 +406,24 @@ func (api *PrivateDebugAPI) traceBlock(ctx context.Context, block *types.Block, 
 	if parent == nil {
 		return nil, fmt.Errorf("parent %x not found", block.ParentHash())
 	}
+
+	c := make(chan bool)
+	m := make(map[string]string)
+	go func() {
+		m["1"] = "a" // First conflicting access.
+		c <- true
+	}()
+
+	go func() {
+		m["1"] = "c" // First conflicting access.
+		c <- true
+	}()
+	m["2"] = "b" // Second conflicting access.
+	<-c
+	for k, v := range m {
+		fmt.Println(k, v)
+	}
+
 	reexec := defaultTraceReexec
 	if config != nil && config.Reexec != nil {
 		reexec = *config.Reexec
