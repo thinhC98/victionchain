@@ -205,6 +205,13 @@ func newHomesteadInstructionSet() JumpTable {
 // that can be executed during the frontier phase.
 func newFrontierInstructionSet() JumpTable {
 	return JumpTable{
+		PUSH0: {
+			execute:     opPush0,
+			constantGas: GasQuickStep,
+			minStack:    minStack(0, 1),
+			maxStack:    maxStack(0, 1),
+			valid:       true,
+		},
 		STOP: {
 			execute:     opStop,
 			constantGas: 0,
