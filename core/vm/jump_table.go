@@ -70,6 +70,7 @@ func newIstanbulInstructionSet() JumpTable {
 	enable1344(&instructionSet) // ChainID opcode - https://eips.ethereum.org/EIPS/eip-1344
 	enable1884(&instructionSet) // Reprice reader opcodes - https://eips.ethereum.org/EIPS/eip-1884
 	enable2200(&instructionSet) // Net metered SSTORE - https://eips.ethereum.org/EIPS/eip-2200
+	enable3855(&instructionSet) // enable PUSH0 Opcode - https://eips.ethereum.org/EIPS/eip-3855
 
 	return instructionSet
 }
@@ -205,13 +206,6 @@ func newHomesteadInstructionSet() JumpTable {
 // that can be executed during the frontier phase.
 func newFrontierInstructionSet() JumpTable {
 	return JumpTable{
-		PUSH0: {
-			execute:     opPush0,
-			constantGas: GasQuickStep,
-			minStack:    minStack(0, 1),
-			maxStack:    maxStack(0, 1),
-			valid:       true,
-		},
 		STOP: {
 			execute:     opStop,
 			constantGas: 0,
