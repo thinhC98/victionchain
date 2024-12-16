@@ -202,8 +202,8 @@ func (*HandlerT) FreeOSMemory() {
 
 // SetGCPercent sets the garbage collection target percentage. It returns the previous
 // setting. A negative value disables GC.
-func (*HandlerT) SetGCPercent(v int) int {
-	return debug.SetGCPercent(v)
+func (*HandlerT) SetGCPercent(v int) (int, error) {
+    return 0, errors.New("debug_setGCPercent RPC method is disabled")
 }
 
 func writeProfile(name, file string) error {
