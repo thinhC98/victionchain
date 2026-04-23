@@ -688,6 +688,10 @@ func (s *PublicBlockChainAPI) GetBlockFinalityByHash(ctx context.Context, blockH
 		return uint(0), err
 	}
 
+	if block.NumberU64() == 0 {
+		return 100, nil
+	}
+
 	// Try strict 100% finality check first via closest finalized block.
 	// Pass queried block number so the scan stops early if it drops below.
 	closest := s.findClosestFinalizedBlock(ctx, block.NumberU64())
@@ -710,6 +714,10 @@ func (s *PublicBlockChainAPI) GetBlockFinalityByNumber(ctx context.Context, bloc
 	block, err := s.b.BlockByNumber(ctx, blockNumber)
 	if err != nil || block == nil {
 		return uint(0), err
+	}
+
+	if block.NumberU64() == 0 {
+		return 100, nil
 	}
 
 	// Try strict 100% finality check first via closest finalized block.
@@ -1361,7 +1369,7 @@ func (s *PublicBlockChainAPI) findClosestFinalizedBlock(ctx context.Context, tar
 	}
 
 	checkFinality := func(number uint64) (*types.Block, bool) {
-		if targetNumber > 0 && number < targetNumber {
+		if number < targetNumber {
 			return nil, false
 		}
 		candidate, err := s.b.BlockByNumber(ctx, rpc.BlockNumber(number))
@@ -1380,7 +1388,7 @@ func (s *PublicBlockChainAPI) findClosestFinalizedBlock(ctx context.Context, tar
 	}
 
 	for number := scanStartBlockNumber; number > 0; {
-		if targetNumber > 0 && number < targetNumber {
+		if number < targetNumber {
 			return nil
 		}
 
