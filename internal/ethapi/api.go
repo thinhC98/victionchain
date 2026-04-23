@@ -690,8 +690,8 @@ func (s *PublicBlockChainAPI) GetBlockFinalityByHash(ctx context.Context, blockH
 
 	// Try strict 100% finality check first via closest finalized block.
 	// Pass queried block number so the scan stops early if it drops below.
-	closest, err := s.findClosestFinalizedBlock(ctx, block.NumberU64())
-	if err == nil && closest != nil {
+	closest := s.findClosestFinalizedBlock(ctx, block.NumberU64())
+	if closest != nil {
 		if block.NumberU64() <= closest.NumberU64() && s.b.AreTwoBlockSamePath(closest.Hash(), block.Hash()) {
 			return 100, nil
 		}
@@ -714,8 +714,8 @@ func (s *PublicBlockChainAPI) GetBlockFinalityByNumber(ctx context.Context, bloc
 
 	// Try strict 100% finality check first via closest finalized block.
 	// Pass queried block number so the scan stops early if it drops below.
-	closest, err := s.findClosestFinalizedBlock(ctx, block.NumberU64())
-	if err == nil && closest != nil {
+	closest := s.findClosestFinalizedBlock(ctx, block.NumberU64())
+	if closest != nil {
 		if block.NumberU64() <= closest.NumberU64() && s.b.AreTwoBlockSamePath(closest.Hash(), block.Hash()) {
 			return 100, nil
 		}
@@ -1342,27 +1342,15 @@ func (s *PublicBlockChainAPI) rpcOutputBlock(b *types.Block, inclTx bool, fullTx
 	return fields, nil
 }
 
-// FinalityBlockClosest returns the closest 100% finalized block number, or 0 if none found.
-func (s *PublicBlockChainAPI) FinalityBlockClosest(ctx context.Context) (uint64, error) {
-	closest, err := s.findClosestFinalizedBlock(ctx, 0)
-	if err != nil {
-		return 0, err
-	}
-	if closest == nil {
-		return 0, nil
-	}
-	return closest.NumberU64(), nil
-}
-
 // findClosestFinalizedBlock scans backward from the current head to find the nearest
 // block with 100% finality (all masternodes have signed).
 // targetNumber is the queried block number: scanning stops early if it drops below this
 // value, since no result below the target can make the target finalized.
 // Pass 0 to scan without early stopping (used by FinalityBlockClosest).
-func (s *PublicBlockChainAPI) findClosestFinalizedBlock(ctx context.Context, targetNumber uint64) (*types.Block, error) {
+func (s *PublicBlockChainAPI) findClosestFinalizedBlock(ctx context.Context, targetNumber uint64) *types.Block {
 	head := s.b.CurrentBlock()
 	if head == nil {
-		return nil, nil
+		return nil
 	}
 
 	headNumber := head.NumberU64()
@@ -1393,18 +1381,18 @@ func (s *PublicBlockChainAPI) findClosestFinalizedBlock(ctx context.Context, tar
 
 	for number := scanStartBlockNumber; number > 0; {
 		if targetNumber > 0 && number < targetNumber {
-			return nil, nil
+			return nil
 		}
 
 		if candidate, ok := checkFinality(number); ok {
-			return candidate, nil
+			return candidate
 		}
 		if number <= step {
 			break
 		}
 		number -= step
 	}
-	return nil, nil
+	return nil
 }
 
 // findNearestSignedBlock finds the nearest checkpoint from input block
