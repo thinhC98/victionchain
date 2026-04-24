@@ -24,6 +24,7 @@ import (
 	"math/big"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tomochain/tomochain/tomox/tradingstate"
@@ -495,12 +496,14 @@ func (s *PrivateAccountAPI) SignAndSendTransaction(ctx context.Context, args Sen
 // PublicBlockChainAPI provides an API to access the Ethereum blockchain.
 // It offers only methods that operate on public data that is freely available to anyone.
 type PublicBlockChainAPI struct {
-	b Backend
+	b                  Backend
+	closestFinalizedMu sync.RWMutex
+	closestFinalized   *types.Block
 }
 
 // NewPublicBlockChainAPI creates a new Ethereum blockchain API.
 func NewPublicBlockChainAPI(b Backend) *PublicBlockChainAPI {
-	return &PublicBlockChainAPI{b}
+	return &PublicBlockChainAPI{b: b}
 }
 
 // BlockNumber returns the block number of the chain head.
@@ -694,7 +697,7 @@ func (s *PublicBlockChainAPI) GetBlockFinalityByHash(ctx context.Context, blockH
 
 	// Try strict 100% finality check first via closest finalized block.
 	// Pass queried block number so the scan stops early if it drops below.
-	closest := s.findClosestFinalizedBlock(ctx, block.NumberU64())
+	closest := s.findClosestFinalizedBlockCached(ctx, block.NumberU64())
 	if closest != nil {
 		if block.NumberU64() <= closest.NumberU64() && s.b.AreTwoBlockSamePath(closest.Hash(), block.Hash()) {
 			return 100, nil
@@ -722,7 +725,7 @@ func (s *PublicBlockChainAPI) GetBlockFinalityByNumber(ctx context.Context, bloc
 
 	// Try strict 100% finality check first via closest finalized block.
 	// Pass queried block number so the scan stops early if it drops below.
-	closest := s.findClosestFinalizedBlock(ctx, block.NumberU64())
+	closest := s.findClosestFinalizedBlockCached(ctx, block.NumberU64())
 	if closest != nil {
 		if block.NumberU64() <= closest.NumberU64() && s.b.AreTwoBlockSamePath(closest.Hash(), block.Hash()) {
 			return 100, nil
@@ -1350,11 +1353,41 @@ func (s *PublicBlockChainAPI) rpcOutputBlock(b *types.Block, inclTx bool, fullTx
 	return fields, nil
 }
 
+// findClosestFinalizedBlockCached uses a head-aware cache to avoid repeating
+// expensive backward scans for every finality RPC call.
+func (s *PublicBlockChainAPI) findClosestFinalizedBlockCached(ctx context.Context, targetNumber uint64) *types.Block {
+	s.closestFinalizedMu.RLock()
+	cachedClosest := s.closestFinalized
+	s.closestFinalizedMu.RUnlock()
+
+	// Once finalized, a block stays finalized. Return immediately if cached
+	// result already covers the target.
+	if cachedClosest != nil && targetNumber <= cachedClosest.NumberU64() {
+		return cachedClosest
+	}
+
+	// Scan backward from head down to targetNumber.
+	closest := s.findClosestFinalizedBlock(ctx, targetNumber)
+
+	// Update cache only if we found a better (higher) finalized block.
+	if closest != nil {
+		s.closestFinalizedMu.Lock()
+		if s.closestFinalized == nil || closest.NumberU64() > s.closestFinalized.NumberU64() {
+			s.closestFinalized = closest
+		}
+		s.closestFinalizedMu.Unlock()
+	}
+
+	if closest != nil && targetNumber <= closest.NumberU64() {
+		return closest
+	}
+	return nil
+}
+
 // findClosestFinalizedBlock scans backward from the current head to find the nearest
 // block with 100% finality (all masternodes have signed).
 // targetNumber is the queried block number: scanning stops early if it drops below this
 // value, since no result below the target can make the target finalized.
-// Pass 0 to scan without early stopping (used by FinalityBlockClosest).
 func (s *PublicBlockChainAPI) findClosestFinalizedBlock(ctx context.Context, targetNumber uint64) *types.Block {
 	head := s.b.CurrentBlock()
 	if head == nil {
@@ -1362,44 +1395,70 @@ func (s *PublicBlockChainAPI) findClosestFinalizedBlock(ctx context.Context, tar
 	}
 
 	headNumber := head.NumberU64()
+
+	engine, ok := s.b.GetEngine().(*posv.Posv)
+	if !ok {
+		return nil
+	}
+	epochSize := s.b.ChainConfig().Posv.Epoch
+
 	scanStartBlockNumber, step := headNumber, uint64(1)
 	if chainConfig := s.b.ChainConfig(); chainConfig != nil && chainConfig.IsTIPSigning(new(big.Int).SetUint64(headNumber)) {
 		step = uint64(common.MergeSignRange)
 		scanStartBlockNumber = headNumber - (headNumber % step)
 	}
 
-	checkFinality := func(number uint64) (*types.Block, bool) {
-		if number < targetNumber {
-			return nil, false
-		}
+	// Cache the epoch checkpoint block across iterations to avoid redundant
+	// DB reads — blocks within the same epoch share the same checkpoint.
+	var cachedCheckpointNum uint64
+	var cachedCheckpointBlock *types.Block
+
+	checkFinality := func(number uint64) *types.Block {
 		candidate, err := s.b.BlockByNumber(ctx, rpc.BlockNumber(number))
 		if err != nil || candidate == nil {
-			return nil, false
-		}
-		masternodes, err := s.GetMasternodes(ctx, candidate)
-		if err != nil || len(masternodes) == 0 {
-			return nil, false
-		}
-		finality, err := s.findFinalityOfBlock(ctx, candidate, masternodes)
-		if err == nil && finality == 100 {
-			return candidate, true
-		}
-		return nil, false
-	}
-
-	for number := scanStartBlockNumber; number > 0; {
-		if number < targetNumber {
 			return nil
 		}
 
-		if candidate, ok := checkFinality(number); ok {
+		// Compute the epoch checkpoint (mirrors GetMasternodes logic).
+		prevBlockNumber := number + (common.MergeSignRange - (number % common.MergeSignRange))
+		if prevBlockNumber >= headNumber || !s.b.ChainConfig().IsTIP2019(candidate.Number()) {
+			prevBlockNumber = number
+		}
+		checkpointNum := prevBlockNumber - (prevBlockNumber % epochSize)
+
+		// Reuse cached checkpoint block if within the same epoch.
+		if checkpointNum != cachedCheckpointNum || cachedCheckpointBlock == nil {
+			cachedCheckpointBlock, _ = s.b.BlockByNumber(ctx, rpc.BlockNumber(checkpointNum))
+			cachedCheckpointNum = checkpointNum
+		}
+
+		if cachedCheckpointBlock == nil {
+			return nil
+		}
+
+		masternodes := engine.GetMasternodesFromCheckpointHeader(cachedCheckpointBlock.Header(), number, epochSize)
+		if len(masternodes) == 0 {
+			return nil
+		}
+
+		finality, err := s.findFinalityOfBlock(ctx, candidate, masternodes)
+		if err == nil && finality == 100 {
 			return candidate
 		}
-		if number <= step {
+		return nil
+	}
+
+	for number := scanStartBlockNumber; number >= targetNumber; {
+		if block := checkFinality(number); block != nil {
+			return block
+		}
+
+		if number < step {
 			break
 		}
 		number -= step
 	}
+
 	return nil
 }
 
