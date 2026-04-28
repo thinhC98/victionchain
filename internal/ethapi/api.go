@@ -1366,8 +1366,13 @@ func (s *PublicBlockChainAPI) findClosestFinalizedBlockCached(ctx context.Contex
 		return cachedClosest
 	}
 
-	// Scan backward from head down to targetNumber.
-	closest := s.findClosestFinalizedBlock(ctx, targetNumber)
+	// Scan a bounded range near head — not all the way down to targetNumber.
+	// If found, it covers all older blocks too.
+	// Use a timeout (like TraceBlockByNumber) to guarantee the RPC never blocks.
+	scanCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	closest := s.findClosestFinalizedBlock(scanCtx, targetNumber)
 
 	// Update cache only if we found a better (higher) finalized block.
 	if closest != nil {
@@ -1386,8 +1391,14 @@ func (s *PublicBlockChainAPI) findClosestFinalizedBlockCached(ctx context.Contex
 
 // findClosestFinalizedBlock scans backward from the current head to find the nearest
 // block with 100% finality (all masternodes have signed).
-// targetNumber is the queried block number: scanning stops early if it drops below this
-// value, since no result below the target can make the target finalized.
+//
+// The caller provides a context with a timeout (e.g. 3 s) so the scan never
+// blocks indefinitely — similar to TraceBlockByNumber's defaultTraceTimeout.
+//
+// The scan range is split into parallel chunks processed by multiple goroutines.
+// Each goroutine scans its chunk from high to low.  As soon as any goroutine
+// finds a finalized block, the remaining work is cancelled via context so that
+// lower chunks (which can only produce inferior results) stop early.
 func (s *PublicBlockChainAPI) findClosestFinalizedBlock(ctx context.Context, targetNumber uint64) *types.Block {
 	head := s.b.CurrentBlock()
 	if head == nil {
@@ -1408,55 +1419,124 @@ func (s *PublicBlockChainAPI) findClosestFinalizedBlock(ctx context.Context, tar
 		scanStartBlockNumber = headNumber - (headNumber % step)
 	}
 
-	// Cache the epoch checkpoint block across iterations to avoid redundant
-	// DB reads — blocks within the same epoch share the same checkpoint.
-	var cachedCheckpointNum uint64
-	var cachedCheckpointBlock *types.Block
-
-	checkFinality := func(number uint64) *types.Block {
-		candidate, err := s.b.BlockByNumber(ctx, rpc.BlockNumber(number))
-		if err != nil || candidate == nil {
-			return nil
-		}
-
-		// Compute the epoch checkpoint (mirrors GetMasternodes logic).
-		prevBlockNumber := number + (common.MergeSignRange - (number % common.MergeSignRange))
-		if prevBlockNumber >= headNumber || !s.b.ChainConfig().IsTIP2019(candidate.Number()) {
-			prevBlockNumber = number
-		}
-		checkpointNum := prevBlockNumber - (prevBlockNumber % epochSize)
-
-		// Reuse cached checkpoint block if within the same epoch.
-		if checkpointNum != cachedCheckpointNum || cachedCheckpointBlock == nil {
-			cachedCheckpointBlock, _ = s.b.BlockByNumber(ctx, rpc.BlockNumber(checkpointNum))
-			cachedCheckpointNum = checkpointNum
-		}
-
-		if cachedCheckpointBlock == nil {
-			return nil
-		}
-
-		masternodes := engine.GetMasternodesFromCheckpointHeader(cachedCheckpointBlock.Header(), number, epochSize)
-		if len(masternodes) == 0 {
-			return nil
-		}
-
-		finality, err := s.findFinalityOfBlock(ctx, candidate, masternodes)
-		if err == nil && finality == 100 {
-			return candidate
-		}
+	if scanStartBlockNumber < targetNumber {
 		return nil
 	}
 
-	for number := scanStartBlockNumber; number >= targetNumber; {
-		if block := checkFinality(number); block != nil {
-			return block
+	// Step-aligned positions from scanStartBlockNumber down to targetNumber.
+	// The 3-second context timeout from the caller bounds wall-clock time.
+	totalPositions := (scanStartBlockNumber-targetNumber)/step + 1
+
+	// Number of parallel workers.  Keep bounded to avoid excessive goroutine
+	// overhead on small ranges.
+	const maxWorkers = 4
+	numWorkers := maxWorkers
+	if totalPositions < uint64(numWorkers) {
+		numWorkers = int(totalPositions)
+	}
+	if numWorkers <= 0 {
+		return nil
+	}
+
+	positionsPerWorker := totalPositions / uint64(numWorkers)
+	// Note: when totalPositions is not evenly divisible by numWorkers, the
+	// last worker absorbs the remainder (not computed from positionsPerWorker).
+
+	type result struct {
+		block *types.Block
+	}
+
+	scanCtx, scanCancel := context.WithCancel(ctx)
+	defer scanCancel()
+
+	results := make([]chan result, numWorkers)
+	for i := 0; i < numWorkers; i++ {
+		results[i] = make(chan result, 1)
+	}
+
+	for i := 0; i < numWorkers; i++ {
+		// Chunk boundaries: worker 0 gets the highest blocks (closest to head).
+		chunkHi := scanStartBlockNumber - uint64(i)*positionsPerWorker*step
+		var chunkLo uint64
+		if i == numWorkers-1 {
+			// Last worker absorbs the remainder from integer division.
+			remainingPositions := totalPositions - uint64(i)*positionsPerWorker
+			chunkLo = chunkHi - (remainingPositions-1)*step
+		} else {
+			chunkLo = chunkHi - (positionsPerWorker-1)*step
 		}
 
-		if number < step {
-			break
+		ch := results[i]
+		go func(hi, lo uint64) {
+			// Each goroutine has its own checkpoint cache to avoid races.
+			var localCachedCheckpointNum uint64
+			var localCachedCheckpointBlock *types.Block
+
+			checkFinality := func(number uint64) *types.Block {
+				// Respect cancellation from a higher-priority chunk.
+				select {
+				case <-scanCtx.Done():
+					return nil
+				default:
+				}
+
+				candidate, err := s.b.BlockByNumber(scanCtx, rpc.BlockNumber(number))
+				if err != nil || candidate == nil {
+					return nil
+				}
+
+				prevBlockNumber := number + (common.MergeSignRange - (number % common.MergeSignRange))
+				if prevBlockNumber >= headNumber || !s.b.ChainConfig().IsTIP2019(candidate.Number()) {
+					prevBlockNumber = number
+				}
+				checkpointNum := prevBlockNumber - (prevBlockNumber % epochSize)
+
+				if checkpointNum != localCachedCheckpointNum || localCachedCheckpointBlock == nil {
+					localCachedCheckpointBlock, _ = s.b.BlockByNumber(scanCtx, rpc.BlockNumber(checkpointNum))
+					localCachedCheckpointNum = checkpointNum
+				}
+
+				if localCachedCheckpointBlock == nil {
+					return nil
+				}
+
+				masternodes := engine.GetMasternodesFromCheckpointHeader(localCachedCheckpointBlock.Header(), number, epochSize)
+				if len(masternodes) == 0 {
+					return nil
+				}
+
+				finality, err := s.findFinalityOfBlock(scanCtx, candidate, masternodes)
+				if err == nil && finality == 100 {
+					return candidate
+				}
+				return nil
+			}
+
+			for number := hi; number >= lo; {
+				if blk := checkFinality(number); blk != nil {
+					ch <- result{block: blk}
+					return
+				}
+
+				if number < step {
+					break
+				}
+				number -= step
+			}
+			ch <- result{block: nil}
+		}(chunkHi, chunkLo)
+	}
+
+	// Collect results in chunk order (highest blocks first).
+	// The first worker to return a finalized block gives us the best possible
+	// result for its chunk.  Workers for higher chunks are checked first, so
+	// the first non-nil result is the overall highest finalized block.
+	for i := 0; i < numWorkers; i++ {
+		r := <-results[i]
+		if r.block != nil {
+			scanCancel() // cancel lower-priority workers
+			return r.block
 		}
-		number -= step
 	}
 
 	return nil
