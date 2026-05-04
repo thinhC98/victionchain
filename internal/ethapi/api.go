@@ -1473,12 +1473,6 @@ func (s *PublicBlockChainAPI) findClosestFinalizedBlock(ctx context.Context, tar
 			var localCachedCheckpointBlock *types.Block
 
 			checkFinality := func(number uint64) *types.Block {
-				// Respect cancellation from a higher-priority chunk.
-				select {
-				case <-scanCtx.Done():
-					return nil
-				default:
-				}
 
 				candidate, err := s.b.BlockByNumber(scanCtx, rpc.BlockNumber(number))
 				if err != nil || candidate == nil {
@@ -1513,6 +1507,14 @@ func (s *PublicBlockChainAPI) findClosestFinalizedBlock(ctx context.Context, tar
 			}
 
 			for number := hi; number >= lo; {
+				// Exit the loop immediately when context is cancelled.
+				select {
+				case <-scanCtx.Done():
+					ch <- result{block: nil}
+					return
+				default:
+				}
+
 				if blk := checkFinality(number); blk != nil {
 					ch <- result{block: blk}
 					return
