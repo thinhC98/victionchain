@@ -1370,14 +1370,20 @@ func (s *PublicBlockChainAPI) findClosestFinalizedBlock(ctx context.Context, tar
 	}
 
 	headNumber := head.NumberU64()
-	scanStartBlockNumber, step := headNumber, uint64(1)
+	scanStartBlockNumber, step := targetNumber, uint64(1)
 	if chainConfig := s.b.ChainConfig(); chainConfig != nil && chainConfig.IsTIPSigning(new(big.Int).SetUint64(headNumber)) {
 		step = uint64(common.MergeSignRange)
-		scanStartBlockNumber = headNumber - (headNumber % step)
+		// Round up to the nearest checkpoint >= targetNumber.
+		remainder := targetNumber % step
+		if remainder == 0 {
+			scanStartBlockNumber = targetNumber
+		} else {
+			scanStartBlockNumber = targetNumber + (step - remainder)
+		}
 	}
 
 	checkFinality := func(number uint64) (*types.Block, bool) {
-		if number < targetNumber {
+		if number > headNumber {
 			return nil, false
 		}
 		candidate, err := s.b.BlockByNumber(ctx, rpc.BlockNumber(number))
@@ -1395,18 +1401,12 @@ func (s *PublicBlockChainAPI) findClosestFinalizedBlock(ctx context.Context, tar
 		return nil, false
 	}
 
-	for number := scanStartBlockNumber; number > 0; {
-		if number < targetNumber {
-			return nil
-		}
+	for number := scanStartBlockNumber; number <= headNumber; {
 
 		if candidate, ok := checkFinality(number); ok {
 			return candidate
 		}
-		if number <= step {
-			break
-		}
-		number -= step
+		number += step
 	}
 	return nil
 }
