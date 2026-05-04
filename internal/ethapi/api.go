@@ -691,9 +691,6 @@ func (s *PublicBlockChainAPI) GetBlockFinalityByHash(ctx context.Context, blockH
 	if block.NumberU64() == 0 {
 		return 100, nil
 	}
-	defer func(start time.Time) {
-		log.Info("GetBlockFinalityByNumber", "blockNumber", block.NumberU64(), "elapsed", time.Since(start))
-	}(time.Now())
 
 	// Try strict 100% finality check first via closest finalized block.
 	// Pass queried block number so the scan stops early if it drops below.
@@ -714,10 +711,6 @@ func (s *PublicBlockChainAPI) GetBlockFinalityByHash(ctx context.Context, blockH
 }
 
 func (s *PublicBlockChainAPI) GetBlockFinalityByNumber(ctx context.Context, blockNumber rpc.BlockNumber) (uint, error) {
-
-	defer func(start time.Time) {
-		log.Info("GetBlockFinalityByNumber", "blockNumber", blockNumber, "elapsed", time.Since(start))
-	}(time.Now())
 
 	block, err := s.b.BlockByNumber(ctx, blockNumber)
 	if err != nil || block == nil {
