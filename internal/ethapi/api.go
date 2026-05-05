@@ -687,46 +687,7 @@ func (s *PublicBlockChainAPI) GetBlockFinalityByHash(ctx context.Context, blockH
 	if err != nil || block == nil {
 		return uint(0), err
 	}
-
-	if block.NumberU64() == 0 {
-		return 100, nil
-	}
-
-	var finalityLegacy uint
-	masternodes, err := s.GetMasternodes(ctx, block)
-	if err != nil {
-		log.Error("Failed to get masternodes", "number", block.NumberU64(), "hash", block.Hash(), "err", err)
-	} else if len(masternodes) == 0 {
-		log.Error("Empty masternodes", "number", block.NumberU64(), "hash", block.Hash())
-	} else {
-		// Masternodes available — compute legacy finality.
-		finalityLegacy, err = s.findFinalityOfBlock(ctx, block, masternodes)
-		if err != nil {
-			// Legacy finality calculation failed; fall through to findClosestFinalizedBlock.
-			log.Error("Failed to find legacy finality of block", "number", block.NumberU64(), "hash", block.Hash(), "err", err)
-		} else if finalityLegacy == 100 {
-			return 100, nil
-		}
-	}
-
-	// findClosestFinalizedBlock scans forward from block.NumberU64(), so closest
-	// (if non-nil) is always at a number >= block.NumberU64(); the same-path check
-	// is the only condition that can distinguish canonical from fork blocks here.
-	closest, closestFinality := s.findClosestFinalizedBlock(ctx, block.NumberU64())
-	if closest == nil {
-		// No finalized block found ahead; fall back to the legacy percentage.
-		return finalityLegacy, nil
-	}
-	if s.b.AreTwoBlockSamePath(closest.Hash(), block.Hash()) {
-		// Block is on the same canonical path as the nearest finalized block.
-		if closestFinality > finalityLegacy {
-			return closestFinality, nil
-		}
-		return finalityLegacy, nil
-	}
-
-	// closest is on a different fork — the queried block has been orphaned.
-	return 0, fmt.Errorf("can not find finality at block %d with hash %s", block.NumberU64(), block.Hash())
+	return s.getBlockFinality(ctx, block)
 }
 
 func (s *PublicBlockChainAPI) GetBlockFinalityByNumber(ctx context.Context, blockNumber rpc.BlockNumber) (uint, error) {
@@ -734,7 +695,14 @@ func (s *PublicBlockChainAPI) GetBlockFinalityByNumber(ctx context.Context, bloc
 	if err != nil || block == nil {
 		return uint(0), err
 	}
+	return s.getBlockFinality(ctx, block)
+}
 
+// getBlockFinality computes the finality percentage for an already-fetched block.
+// It first attempts the legacy per-block finality calculation, then falls back to
+// scanning forward with findClosestFinalizedBlock when the legacy path fails or
+// returns a partial result.
+func (s *PublicBlockChainAPI) getBlockFinality(ctx context.Context, block *types.Block) (uint, error) {
 	if block.NumberU64() == 0 {
 		return 100, nil
 	}
@@ -773,7 +741,7 @@ func (s *PublicBlockChainAPI) GetBlockFinalityByNumber(ctx context.Context, bloc
 	}
 
 	// closest is on a different fork — the queried block has been orphaned.
-	return 0, fmt.Errorf("can not find finality at block %d with hash %s", block.NumberU64(), block.Hash())
+	return finalityLegacy, nil
 }
 
 // GetMasternodes returns masternodes set at the starting block of epoch of the given block
