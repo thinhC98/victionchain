@@ -692,26 +692,44 @@ func (s *PublicBlockChainAPI) GetBlockFinalityByHash(ctx context.Context, blockH
 		return 100, nil
 	}
 
-	// Try strict 100% finality check first via closest finalized block.
-	// Pass queried block number so the scan stops early if it drops below.
-	closest := s.findClosestFinalizedBlock(ctx, block.NumberU64())
-	if closest != nil {
-		if block.NumberU64() <= closest.NumberU64() && s.b.AreTwoBlockSamePath(closest.Hash(), block.Hash()) {
+	var finalityLegacy uint
+	masternodes, err := s.GetMasternodes(ctx, block)
+	if err != nil {
+		log.Error("Failed to get masternodes", "number", block.NumberU64(), "hash", block.Hash(), "err", err)
+	} else if len(masternodes) == 0 {
+		log.Error("Empty masternodes", "number", block.NumberU64(), "hash", block.Hash())
+	} else {
+		// Masternodes available — compute legacy finality.
+		finalityLegacy, err = s.findFinalityOfBlock(ctx, block, masternodes)
+		if err != nil {
+			// Legacy finality calculation failed; fall through to findClosestFinalizedBlock.
+			log.Error("Failed to find legacy finality of block", "number", block.NumberU64(), "hash", block.Hash(), "err", err)
+		} else if finalityLegacy == 100 {
 			return 100, nil
 		}
 	}
 
-	// Fallback to legacy percentage flow.
-	masternodes, err := s.GetMasternodes(ctx, block)
-	if err != nil || len(masternodes) == 0 {
-		log.Error("Failed to get masternodes", "err", err, "len(masternodes)", len(masternodes))
-		return uint(0), err
+	// findClosestFinalizedBlock scans forward from block.NumberU64(), so closest
+	// (if non-nil) is always at a number >= block.NumberU64(); the same-path check
+	// is the only condition that can distinguish canonical from fork blocks here.
+	closest, closestFinality := s.findClosestFinalizedBlock(ctx, block.NumberU64())
+	if closest == nil {
+		// No finalized block found ahead; fall back to the legacy percentage.
+		return finalityLegacy, nil
 	}
-	return s.findFinalityOfBlock(ctx, block, masternodes)
+	if s.b.AreTwoBlockSamePath(closest.Hash(), block.Hash()) {
+		// Block is on the same canonical path as the nearest finalized block.
+		if closestFinality > finalityLegacy {
+			return closestFinality, nil
+		}
+		return finalityLegacy, nil
+	}
+
+	// closest is on a different fork — the queried block has been orphaned.
+	return 0, fmt.Errorf("can not find finality at block %d with hash %s", block.NumberU64(), block.Hash())
 }
 
 func (s *PublicBlockChainAPI) GetBlockFinalityByNumber(ctx context.Context, blockNumber rpc.BlockNumber) (uint, error) {
-
 	block, err := s.b.BlockByNumber(ctx, blockNumber)
 	if err != nil || block == nil {
 		return uint(0), err
@@ -721,22 +739,41 @@ func (s *PublicBlockChainAPI) GetBlockFinalityByNumber(ctx context.Context, bloc
 		return 100, nil
 	}
 
-	// Try strict 100% finality check first via closest finalized block.
-	// Pass queried block number so the scan stops early if it drops below.
-	closest := s.findClosestFinalizedBlock(ctx, block.NumberU64())
-	if closest != nil {
-		if block.NumberU64() <= closest.NumberU64() && s.b.AreTwoBlockSamePath(closest.Hash(), block.Hash()) {
+	var finalityLegacy uint
+	masternodes, err := s.GetMasternodes(ctx, block)
+	if err != nil {
+		log.Error("Failed to get masternodes", "number", block.NumberU64(), "hash", block.Hash(), "err", err)
+	} else if len(masternodes) == 0 {
+		log.Error("Empty masternodes", "number", block.NumberU64(), "hash", block.Hash())
+	} else {
+		// Masternodes available — compute legacy finality.
+		finalityLegacy, err = s.findFinalityOfBlock(ctx, block, masternodes)
+		if err != nil {
+			// Legacy finality calculation failed; fall through to findClosestFinalizedBlock.
+			log.Error("Failed to find legacy finality of block", "number", block.NumberU64(), "hash", block.Hash(), "err", err)
+		} else if finalityLegacy == 100 {
 			return 100, nil
 		}
 	}
 
-	// Fallback to legacy percentage flow.
-	masternodes, err := s.GetMasternodes(ctx, block)
-	if err != nil || len(masternodes) == 0 {
-		log.Error("Failed to get masternodes", "err", err, "len(masternodes)", len(masternodes))
-		return uint(0), err
+	// findClosestFinalizedBlock scans forward from block.NumberU64(), so closest
+	// (if non-nil) is always at a number >= block.NumberU64(); the same-path check
+	// is the only condition that can distinguish canonical from fork blocks here.
+	closest, closestFinality := s.findClosestFinalizedBlock(ctx, block.NumberU64())
+	if closest == nil {
+		// No finalized block found ahead; fall back to the legacy percentage.
+		return finalityLegacy, nil
 	}
-	return s.findFinalityOfBlock(ctx, block, masternodes)
+	if s.b.AreTwoBlockSamePath(closest.Hash(), block.Hash()) {
+		// Block is on the same canonical path as the nearest finalized block.
+		if closestFinality > finalityLegacy {
+			return closestFinality, nil
+		}
+		return finalityLegacy, nil
+	}
+
+	// closest is on a different fork — the queried block has been orphaned.
+	return 0, fmt.Errorf("can not find finality at block %d with hash %s", block.NumberU64(), block.Hash())
 }
 
 // GetMasternodes returns masternodes set at the starting block of epoch of the given block
@@ -1351,34 +1388,47 @@ func (s *PublicBlockChainAPI) rpcOutputBlock(b *types.Block, inclTx bool, fullTx
 	return fields, nil
 }
 
-// findClosestFinalizedBlock scans backward from the current head to find the nearest
-// block with 100% finality (all masternodes have signed).
-// targetNumber is the queried block number: scanning stops early if it drops below this
-// value, since no result below the target can make the target finalized.
-// Pass 0 to scan without early stopping (used by FinalityBlockClosest).
-func (s *PublicBlockChainAPI) findClosestFinalizedBlock(ctx context.Context, targetNumber uint64) *types.Block {
+// findClosestFinalizedBlock scans forward from targetNumber to the current chain
+// head looking for the block with the highest finality percentage.
+//
+// When the TIPSigning fork is active, only MergeSignRange checkpoint blocks are
+// checked (rounded up from targetNumber); otherwise every block is checked.
+//
+// Returns the best block found and its finality percentage (0–100).
+// Returns (nil, 0) when no candidate could be evaluated (e.g. no chain head).
+func (s *PublicBlockChainAPI) findClosestFinalizedBlock(ctx context.Context, targetNumber uint64) (*types.Block, uint) {
 	head := s.b.CurrentBlock()
 	if head == nil {
-		return nil
+		return nil, 0
 	}
 
 	headNumber := head.NumberU64()
-	scanStartBlockNumber, step := targetNumber, uint64(1)
+
+	// Determine scan step and start position.
+	// Under TIPSigning, signatures are aggregated at MergeSignRange checkpoints,
+	// so only those block numbers carry meaningful finality data.
+	step := uint64(1)
+	scanStart := targetNumber
 	if chainConfig := s.b.ChainConfig(); chainConfig != nil && chainConfig.IsTIPSigning(new(big.Int).SetUint64(headNumber)) {
 		step = uint64(common.MergeSignRange)
-		// Round up to the nearest checkpoint >= targetNumber.
-		remainder := targetNumber % step
-		if remainder == 0 {
-			scanStartBlockNumber = targetNumber
-		} else {
-			scanStartBlockNumber = targetNumber + (step - remainder)
+		// Round up to the first checkpoint >= targetNumber.
+		if rem := targetNumber % step; rem != 0 {
+			scanStart = targetNumber + (step - rem)
 		}
 	}
 
-	checkFinality := func(number uint64) (*types.Block, bool) {
-		if number > headNumber {
-			return nil, false
-		}
+	// Track the highest-finality block seen so far.
+	// Used as the fallback result when no block reaches 100%.
+	var (
+		bestFinality uint
+		bestBlock    *types.Block
+	)
+
+	// evalBlock computes the finality of the block at number and updates the
+	// running best. Returns (block, true) when 100% finality is confirmed so
+	// the caller can stop early; returns (nil, false) when the block should be
+	// skipped (fetch error, no masternodes, or finality error).
+	evalBlock := func(number uint64) (*types.Block, bool) {
 		candidate, err := s.b.BlockByNumber(ctx, rpc.BlockNumber(number))
 		if err != nil || candidate == nil {
 			return nil, false
@@ -1388,20 +1438,30 @@ func (s *PublicBlockChainAPI) findClosestFinalizedBlock(ctx context.Context, tar
 			return nil, false
 		}
 		finality, err := s.findFinalityOfBlock(ctx, candidate, masternodes)
-		if err == nil && finality == 100 {
+		if err != nil {
+			return nil, false
+		}
+		if finality > bestFinality {
+			bestFinality = finality
+			bestBlock = candidate
+		}
+		if finality == 100 {
 			return candidate, true
 		}
 		return nil, false
 	}
 
-	for number := scanStartBlockNumber; number <= headNumber; {
-
-		if candidate, ok := checkFinality(number); ok {
-			return candidate
+	for number := scanStart; number <= headNumber; number += step {
+		if candidate, found := evalBlock(number); found {
+			return candidate, 100
 		}
-		number += step
 	}
-	return nil
+
+	// No block reached 100%; return the best partial result if any.
+	if bestFinality > 0 && bestBlock != nil {
+		return bestBlock, bestFinality
+	}
+	return nil, 0
 }
 
 // findNearestSignedBlock finds the nearest checkpoint from input block
